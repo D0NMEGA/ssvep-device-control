@@ -27,9 +27,21 @@ This project implements a 4-class SSVEP BCI that:
   - 4 red LEDs on pins D6-D9 (visual feedback chaser)
   - Push button on D10 (start/stop)
 
-### EEG Montage
-Occipital/parietal placement recommended:
-- O1, O2, Oz, POz, PO3, PO4, PO7, PO8
+### EEG Electrode Montage
+8-channel occipital/parietal placement optimized for SSVEP:
+
+| Channel | Electrode | X | Y | Z |
+|---------|-----------|-------|-------|-------|
+| 1 | Pz | 0.000 | -0.587 | 0.809 |
+| 2 | P3 | -0.444 | -0.587 | 0.678 |
+| 3 | P4 | +0.444 | -0.587 | 0.678 |
+| 4 | PO3 | -0.518 | -0.743 | 0.425 |
+| 5 | PO4 | +0.518 | -0.743 | 0.425 |
+| 6 | O1 | -0.309 | -0.951 | 0.000 |
+| 7 | Oz | 0.000 | -1.000 | 0.000 |
+| 8 | O2 | +0.309 | -0.951 | 0.000 |
+
+*Coordinates are 10-20 system unit sphere positions (X: left-right, Y: front-back, Z: up-down)*
 
 ## Installation
 
@@ -88,13 +100,39 @@ python run_cli.py --port COM3 --no-log
 --list-ports    List available serial ports
 ```
 
+### Run with Arduino Visual Feedback
+The BCI can control the Arduino to provide real-time visual feedback - when you look at a white LED and the system detects it, the corresponding red LED lights up!
+
+```bash
+# Full system: Arduino + Cyton + Visual Feedback
+python run_bci_with_feedback.py
+
+# Specify ports manually
+python run_bci_with_feedback.py --arduino COM3 --cyton COM4
+
+# Test with synthetic EEG (Arduino only, no Cyton)
+python run_bci_with_feedback.py --synthetic
+
+# List available ports
+python run_bci_with_feedback.py --list-ports
+```
+
+**Arduino Setup:**
+1. Upload `arduino/ssvep_stimulator/ssvep_stimulator.ino` to your Arduino Mega
+2. Connect LEDs as specified in Hardware Setup
+3. The Python script will automatically start/stop stimulation
+
 ## Project Structure
 
 ```
 ssvep-device-control/
-├── run_cli.py              # CLI entry point (run from here)
+├── run_cli.py              # CLI classifier (no Arduino control)
+├── run_bci_with_feedback.py # Full BCI with Arduino feedback
 ├── run_gui.py              # GUI entry point (Phase 2)
 ├── requirements.txt        # Python dependencies
+│
+├── arduino/                # Arduino sketches
+│   └── ssvep_stimulator/   # LED stimulator with serial control
 ├── README.md
 │
 └── ssvep_bci/              # Main package
@@ -111,6 +149,7 @@ ssvep-device-control/
     │
     ├── drivers/
     │   ├── brainflow_driver.py  # OpenBCI Cyton interface
+    │   ├── arduino_controller.py # Arduino serial communication
     │   └── data_logger.py       # CSV logging utilities
     │
     └── gui/                # Phase 2 (coming soon)

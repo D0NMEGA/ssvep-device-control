@@ -59,13 +59,28 @@ class SSVEPConfig:
     agreement_window: int = 2  # Number of consecutive windows that must agree
 
     # ==========================================================================
-    # Channel Configuration
+    # Channel Configuration & Electrode Montage
     # ==========================================================================
     # OpenBCI Cyton has 8 channels (0-7)
-    # For SSVEP, use occipital/parietal channels
-    # Default: use all 8 channels, adjust based on your montage
-    # Typical SSVEP montage: O1, O2, Oz, POz, PO3, PO4, PO7, PO8
+    # Current montage: Pz, P3, P4, PO3, PO4, O1, Oz, O2
+    # All occipital/parietal electrodes optimized for SSVEP
     eeg_channels: List[int] = field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6, 7])
+
+    # Electrode names corresponding to channels 0-7
+    electrode_names: Tuple[str, ...] = ("Pz", "P3", "P4", "PO3", "PO4", "O1", "Oz", "O2")
+
+    # 3D electrode positions (10-20 system, unit sphere coordinates)
+    # Format: {electrode_name: (x, y, z)}
+    electrode_positions: dict = field(default_factory=lambda: {
+        "Pz":  ( 0.000, -0.587,  0.809),
+        "P3":  (-0.444, -0.587,  0.678),
+        "P4":  ( 0.444, -0.587,  0.678),
+        "PO3": (-0.518, -0.743,  0.425),
+        "PO4": ( 0.518, -0.743,  0.425),
+        "O1":  (-0.309, -0.951,  0.000),
+        "Oz":  ( 0.000, -1.000,  0.000),
+        "O2":  ( 0.309, -0.951,  0.000),
+    })
 
     # Total channels on Cyton (including aux channels)
     n_total_channels: int = 8
