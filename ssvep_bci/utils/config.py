@@ -31,8 +31,8 @@ class SSVEPConfig:
     # ==========================================================================
     # SSVEP Target Frequencies (Hz) - Must match Arduino LED flicker rates
     # ==========================================================================
-    # Arduino pins: D2=8.57Hz, D3=10Hz, D4=12Hz, D5=15Hz
-    target_frequencies: Tuple[float, ...] = (8.57, 10.0, 12.0, 15.0)
+    # Arduino pins (DESCENDING order): D2=15Hz, D3=12Hz, D4=10Hz, D5=8.57Hz
+    target_frequencies: Tuple[float, ...] = (15.0, 12.0, 10.0, 8.57)
 
     # Number of harmonics to include in reference signals (1 = fundamental only)
     n_harmonics: int = 2  # fundamental + 1st harmonic

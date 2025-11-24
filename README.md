@@ -11,12 +11,12 @@ This project implements a 4-class SSVEP BCI that:
 - Targets ≥90% classification accuracy
 
 ### Target Frequencies (Arduino LED Flicker Rates)
-| LED Pin | Frequency | Half-Period |
-|---------|-----------|-------------|
-| D2 | 8.57 Hz | 58,333 µs |
-| D3 | 10.0 Hz | 50,000 µs |
-| D4 | 12.0 Hz | 41,667 µs |
-| D5 | 15.0 Hz | 33,333 µs |
+| Physical Position | LED Pin | Frequency | Half-Period |
+|-------------------|---------|-----------|-------------|
+| Far Left | D5 | 8.57 Hz | 58,333 µs |
+| Center-Left | D4 | 10.0 Hz | 50,000 µs |
+| Center-Right | D3 | 12.0 Hz | 41,667 µs |
+| Far Right | D2 | 15.0 Hz | 33,333 µs |
 
 ## Hardware Setup
 
@@ -122,38 +122,78 @@ python run_bci_with_feedback.py --list-ports
 2. Connect LEDs as specified in Hardware Setup
 3. The Python script will automatically start/stop stimulation
 
+## Calibration (Personalized Templates)
+
+Run calibration to create personalized templates for improved accuracy:
+
+```bash
+# Run calibration (5 trials per frequency, 4 seconds each)
+python run_calibration.py --subject YOUR_NAME --cyton COM3
+
+# Shorter calibration for testing
+python run_calibration.py --subject YOUR_NAME --cyton COM3 --trials 3 --duration 3
+```
+
+Data is saved to `calibration/YOUR_NAME/session_YYYYMMDD_HHMMSS.npz`
+
+### Run BCI with Calibrated Templates
+```bash
+# Uses all your calibration sessions (incremental learning)
+python run_bci_calibrated.py --subject YOUR_NAME --cyton COM3
+
+# Use only latest session
+python run_bci_calibrated.py --subject YOUR_NAME --cyton COM3 --latest-only
+
+# List available calibrations
+python run_bci_calibrated.py --list-calibrations
+```
+
+**Incremental Learning**: Each calibration session adds to your template library. More sessions = more robust templates!
+
 ## Project Structure
 
 ```
 ssvep-device-control/
-├── run_cli.py              # CLI classifier (no Arduino control)
-├── run_bci_with_feedback.py # Full BCI with Arduino feedback
-├── run_gui.py              # GUI entry point (Phase 2)
-├── requirements.txt        # Python dependencies
+├── run_cli.py               # CLI classifier (no Arduino)
+├── run_bci_with_feedback.py # BCI with Arduino feedback
+├── run_bci_calibrated.py    # BCI with personalized templates
+├── run_calibration.py       # Calibration data collection
+├── run_gui.py               # PyQt6 GUI
+├── requirements.txt
 │
-├── arduino/                # Arduino sketches
-│   └── ssvep_stimulator/   # LED stimulator with serial control
-├── README.md
+├── calibration/             # Calibration data (per subject)
+│   └── YOUR_NAME/
+│       ├── session_*.npz    # EEG epochs
+│       └── session_*.json   # Metadata
 │
-└── ssvep_bci/              # Main package
-    ├── main.py             # Application entry point
-    ├── cli_test.py         # Real-time CLI with visualization
+├── arduino/
+│   └── ssvep_stimulator/    # LED stimulator sketch
+│
+└── ssvep_bci/
+    ├── main.py
+    ├── cli_test.py
     │
     ├── utils/
-    │   └── config.py       # Configuration parameters
+    │   └── config.py
     │
     ├── models/
-    │   ├── eeg_buffer.py   # Ring buffer with sliding windows
-    │   ├── preprocessor.py # CAR + Butterworth bandpass
-    │   └── cca_decoder.py  # CCA classification + voting
+    │   ├── eeg_buffer.py    # Ring buffer
+    │   ├── preprocessor.py  # CAR + bandpass
+    │   ├── cca_decoder.py   # Standard CCA
+    │   ├── calibration.py   # Calibration data collection
+    │   └── template_cca.py  # Template-based CCA
     │
     ├── drivers/
-    │   ├── brainflow_driver.py  # OpenBCI Cyton interface
-    │   ├── arduino_controller.py # Arduino serial communication
-    │   └── data_logger.py       # CSV logging utilities
+    │   ├── brainflow_driver.py
+    │   ├── arduino_controller.py
+    │   └── data_logger.py
     │
-    └── gui/                # Phase 2 (coming soon)
-        └── main_window.py
+    └── gui/
+        ├── main_window.py
+        └── widgets/
+            ├── signal_plot.py
+            ├── classification_panel.py
+            └── control_panel.py
 ```
 
 ## Algorithm
@@ -179,12 +219,18 @@ ssvep-device-control/
 
 ## Arduino Sketch
 
-The Arduino runs independently with this behavior:
-- **Button (D10)**: Toggle LED activity on/off
+The Arduino communicates with Python via serial (115200 baud):
+- **Button (D10)**: Manual toggle LED activity on/off
 - **White LEDs (D2-D5)**: Non-blocking square wave flicker at target frequencies
-- **Red LEDs (D6-D9)**: 1-second chaser pattern (visual feedback)
+- **Red LEDs (D6-D9)**: Feedback LEDs controlled by Python
 
-**Note**: The Arduino sketch is pre-loaded and NOT modified by this software. The Python BCI only reads EEG and classifies - it does not control the Arduino.
+**Serial Commands** (Python -> Arduino):
+- `START` - Start LED flickering
+- `STOP` - Stop all LEDs
+- `FEEDBACK:N` - Light red LED N (0-3) for visual feedback
+- `CLEAR` - Turn off all red LEDs
+
+Upload `arduino/ssvep_stimulator/ssvep_stimulator.ino` to your Arduino Mega before use.
 
 ## Logging
 
@@ -204,7 +250,8 @@ class SSVEPConfig:
     window_samples: int = 63         # ~252 ms window
     step_samples: int = 12           # ~48 ms step
 
-    target_frequencies = (8.57, 10.0, 12.0, 15.0)
+    target_frequencies = (15.0, 12.0, 10.0, 8.57)
+    # Physical layout (left to right): 8.57, 10, 12, 15 Hz
     n_harmonics: int = 2             # Fundamental + 1 harmonic
 
     confidence_threshold: float = 0.55
@@ -241,9 +288,12 @@ python run_cli.py --list-ports
 - [x] **Phase 1**: Core pipeline (buffer, CCA, decision logic)
 - [x] **Phase 1**: CLI test interface with real-time display
 - [x] **Phase 1**: Synthetic data generator for testing
-- [ ] **Phase 2**: PyQt6 GUI with live EEG plots
-- [ ] **Phase 2**: Calibration mode with per-subject templates
-- [ ] **Phase 2**: Device control output (keyboard/mouse simulation)
+- [x] **Phase 1**: Arduino serial control with visual feedback
+- [x] **Phase 2**: PyQt6 GUI with live EEG plots
+- [x] **Phase 2**: Calibration mode with per-subject templates
+- [x] **Phase 2**: Incremental learning (combine multiple sessions)
+- [ ] **Phase 3**: Device control output (keyboard/mouse simulation)
+- [ ] **Phase 3**: Filter bank CCA for improved accuracy
 
 ## References
 

@@ -43,12 +43,13 @@ class ArduinoController:
     - Providing visual feedback based on BCI classification
     """
 
-    # Map frequency to LED index (matching Arduino whitePins order)
+    # Map frequency to LED index (matching Arduino arrays)
+    # Physical layout left-to-right: 8.57 Hz -> 10 Hz -> 12 Hz -> 15 Hz
     FREQ_TO_LED = {
-        8.57: 0,   # D2
-        10.0: 1,   # D3
-        12.0: 2,   # D4
-        15.0: 3,   # D5
+        15.0: 0,   # D2/D6 - far right
+        12.0: 1,   # D3/D7 - center-right
+        10.0: 2,   # D4/D8 - center-left
+        8.57: 3,   # D5/D9 - far left
     }
 
     def __init__(self, port: str = None, baudrate: int = 115200, timeout: float = 1.0):

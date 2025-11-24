@@ -5,9 +5,9 @@
  * and 4 red LEDs for BCI feedback. Supports both button control
  * and serial commands from Python.
  *
- * Hardware:
- *   - White LEDs: D2 (8.57Hz), D3 (10Hz), D4 (12Hz), D5 (15Hz)
- *   - Red LEDs: D6, D7, D8, D9 (feedback indicators)
+ * Hardware (Physical layout LEFT to RIGHT):
+ *   - White LEDs: D5 (8.57Hz), D4 (10Hz), D3 (12Hz), D2 (15Hz)
+ *   - Red LEDs:   D9 (8.57Hz), D8 (10Hz), D7 (12Hz), D6 (15Hz) - feedback
  *   - Button: D10 (INPUT_PULLUP, start/stop toggle)
  *
  * Serial Protocol (115200 baud):
@@ -29,9 +29,9 @@ const int redPins[] = {6, 7, 8, 9};    // Feedback LEDs
 const int BUTTON_PIN = 10;
 const int NUM_LEDS = 4;
 
-// Flicker frequencies (Hz) and half-periods (microseconds)
-const float frequencies[] = {8.57, 10.0, 12.0, 15.0};
-unsigned long halfPeriods[] = {58333, 50000, 41667, 33333};
+// Flicker frequencies (Hz) and half-periods (microseconds) - DESCENDING order
+const float frequencies[] = {15.0, 12.0, 10.0, 8.57};
+unsigned long halfPeriods[] = {33333, 41667, 50000, 58333};
 
 // LED state
 bool ledStates[] = {false, false, false, false};
