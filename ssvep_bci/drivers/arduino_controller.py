@@ -68,6 +68,10 @@ class ArduinoController:
         self.is_connected = False
         self.is_running = False
 
+        # Button press detection
+        self.button_pressed = False  # Set to True when button pressed on Arduino
+        self._expected_stop = False   # Track if we commanded a stop
+
         # Callback for status updates
         self._status_callback: Optional[Callable] = None
 
@@ -195,10 +199,27 @@ class ArduinoController:
         if response == "RUNNING":
             self.is_running = True
         elif response == "STOPPED":
+            # Check if this was unexpected (button press)
+            if not self._expected_stop and self.is_running:
+                logger.warning("Button pressed on Arduino - emergency stop!")
+                self.button_pressed = True
+
             self.is_running = False
+            self._expected_stop = False  # Reset flag
 
         if self._status_callback:
             self._status_callback(response)
+
+    def check_button_pressed(self) -> bool:
+        """Check if emergency stop button was pressed.
+
+        Returns:
+            True if button was pressed since last check
+        """
+        if self.button_pressed:
+            self.button_pressed = False  # Reset flag
+            return True
+        return False
 
     def send_command(self, command: str) -> bool:
         """Send command to Arduino.
@@ -236,6 +257,7 @@ class ArduinoController:
         Returns:
             True if command sent successfully
         """
+        self._expected_stop = True  # Mark this as an expected stop
         success = self.send_command("STOP")
         if success:
             self.is_running = False

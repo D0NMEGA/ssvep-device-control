@@ -8,8 +8,9 @@ Handles board connection, streaming, and data retrieval.
 import numpy as np
 from threading import Thread, Event
 import time
-from typing import Optional, Callable, List
+from typing import Optional, Callable, List, Tuple
 import logging
+import serial.tools.list_ports
 
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
 from brainflow.data_filter import DataFilter
@@ -71,6 +72,39 @@ class BrainFlowDriver:
         # Enable BrainFlow logging
         BoardShim.enable_dev_board_logger()
 
+    @staticmethod
+    def list_ports() -> List[Tuple[str, str]]:
+        """List available serial ports.
+
+        Returns:
+            List of (port_name, description) tuples
+        """
+        ports = []
+        for port in serial.tools.list_ports.comports():
+            ports.append((port.device, port.description))
+        return ports
+
+    @staticmethod
+    def auto_detect_cyton() -> Optional[str]:
+        """Automatically detect OpenBCI Cyton board.
+
+        Looks for FTDI devices (Cyton uses FT231X)
+
+        Returns:
+            Serial port string if found, None otherwise
+        """
+        for port in serial.tools.list_ports.comports():
+            # Check for FTDI devices (Cyton uses FTDI FT231X)
+            desc = port.description.lower()
+            manufacturer = (port.manufacturer or "").lower()
+
+            if 'ftdi' in desc or 'ftdi' in manufacturer or 'ft231x' in desc:
+                logger.info(f"Found potential OpenBCI Cyton on {port.device}: {port.description}")
+                return port.device
+
+        logger.warning("No OpenBCI Cyton found via auto-detection")
+        return None
+
     def connect(self, serial_port: str = None) -> bool:
         """Connect to the Cyton board.
 
@@ -95,13 +129,19 @@ class BrainFlowDriver:
             else:
                 board_id = self.config.board_id
 
-                # Set serial port
+                # Set serial port (with auto-detection)
                 port = serial_port or self.config.serial_port
+
+                # Try auto-detection if no port specified
+                if not port:
+                    logger.info("No port specified, attempting auto-detection...")
+                    port = self.auto_detect_cyton()
+
                 if port:
                     self.params.serial_port = port
                     logger.info(f"Using serial port: {port}")
                 else:
-                    logger.info("No serial port specified, BrainFlow will auto-detect")
+                    logger.warning("No serial port found - BrainFlow will try default port")
 
             # Create board
             self.board = BoardShim(board_id, self.params)

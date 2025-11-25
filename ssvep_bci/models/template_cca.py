@@ -330,14 +330,18 @@ class TemplateCCADecoder:
                 committed = instantaneous
 
         processing_time = (time.perf_counter() - start_time) * 1000
+        timestamp_ms = time.time() * 1000
 
         return DecisionResult(
             correlations=correlations,
+            max_corr=best_corr,
+            margin=margin,
             instantaneous_prediction=instantaneous,
             committed_prediction=committed,
-            confidence=best_corr,
-            margin=margin,
-            processing_time_ms=processing_time
+            confidence_met=best_corr >= self.config.confidence_threshold,
+            margin_met=margin >= self.config.margin_threshold,
+            processing_time_ms=processing_time,
+            timestamp_ms=timestamp_ms
         )
 
     def reset(self) -> None:

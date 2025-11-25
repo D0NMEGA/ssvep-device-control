@@ -1,0 +1,32 @@
+{
+  "subject_id": "Donovan_Santine",
+  "session_time": "20251124_214744",
+  "fs": 250,
+  "channel_names": [
+    "Pz",
+    "P3",
+    "P4",
+    "PO3",
+    "PO4",
+    "O1",
+    "Oz",
+    "O2"
+  ],
+  "frequencies": [
+    15.0,
+    12.0,
+    10.0,
+    8.57
+  ],
+  "trial_duration": 4.0,
+  "trials_per_frequency": 5,
+  "n_trials": 20,
+  "n_channels": 8,
+  "n_samples_per_trial": 1082,
+  "event_id_mapping": {
+    "15.0": 1,
+    "12.0": 2,
+    "10.0": 3,
+    "8.57": 4
+  }
+}

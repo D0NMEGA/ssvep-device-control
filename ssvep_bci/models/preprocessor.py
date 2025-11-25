@@ -53,6 +53,11 @@ class SSVEPPreprocessor:
         if self.config.notch_freq is not None:
             self._design_notch_filter()
 
+        # Smoothing filter (moving average) state
+        self.smoothing_buffer = None
+        if self.config.smoothing_enabled:
+            self._init_smoothing_buffer()
+
         # Track if we've been initialized with real data
         self._initialized = False
 
@@ -107,6 +112,15 @@ class SSVEPPreprocessor:
             for _ in range(self.config.n_eeg_channels)
         ]
 
+    def _init_smoothing_buffer(self) -> None:
+        """Initialize smoothing buffer for moving average."""
+        # Buffer to store recent samples for each channel
+        # Shape: (n_channels, smoothing_window)
+        self.smoothing_buffer = [
+            np.zeros(self.config.smoothing_window)
+            for _ in range(self.config.n_eeg_channels)
+        ]
+
     def _init_filter_state(self) -> None:
         """Initialize filter states for all channels."""
         # Get initial state template
@@ -127,6 +141,8 @@ class SSVEPPreprocessor:
                 signal.sosfilt_zi(self.notch_sos) * 0
                 for _ in range(self.config.n_eeg_channels)
             ]
+        if self.config.smoothing_enabled:
+            self._init_smoothing_buffer()
         self._initialized = False
 
     def apply_car(self, data: np.ndarray) -> np.ndarray:
@@ -197,16 +213,46 @@ class SSVEPPreprocessor:
 
         return filtered
 
+    def apply_smoothing(self, data: np.ndarray) -> np.ndarray:
+        """Apply moving average smoothing filter.
+
+        Uses a causal moving average with persistent state for streaming data.
+
+        Args:
+            data: EEG data with shape (n_channels, n_samples)
+
+        Returns:
+            Smoothed data with same shape
+        """
+        if not self.config.smoothing_enabled or self.smoothing_buffer is None:
+            return data
+
+        n_channels, n_samples = data.shape
+        smoothed = np.zeros_like(data)
+        window_size = self.config.smoothing_window
+
+        for ch in range(n_channels):
+            for i in range(n_samples):
+                # Shift buffer (remove oldest, add newest)
+                self.smoothing_buffer[ch] = np.roll(self.smoothing_buffer[ch], -1)
+                self.smoothing_buffer[ch][-1] = data[ch, i]
+
+                # Compute moving average
+                smoothed[ch, i] = np.mean(self.smoothing_buffer[ch])
+
+        return smoothed
+
     def process(self, data: np.ndarray) -> np.ndarray:
         """Apply full preprocessing pipeline.
 
         Pipeline order:
         1. Common Average Reference (CAR)
-        2. Bandpass filter (6-40 Hz default)
-        3. Notch filter (if configured)
+        2. Bandpass filter (5-50 Hz default)
+        3. Notch filter (60 Hz for US powerline noise)
+        4. Smoothing (moving average)
 
         Args:
-            data: Raw EEG data with shape (n_channels, n_samples)
+            data: Raw EEEG data with shape (n_channels, n_samples)
 
         Returns:
             Preprocessed data with same shape
@@ -227,6 +273,9 @@ class SSVEPPreprocessor:
 
         if self.notch_sos is not None:
             processed = self.apply_notch(processed)
+
+        if self.config.smoothing_enabled:
+            processed = self.apply_smoothing(processed)
 
         return processed
 

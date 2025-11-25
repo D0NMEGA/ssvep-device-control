@@ -42,12 +42,16 @@ class SSVEPConfig:
     # ==========================================================================
     # Butterworth bandpass filter
     filter_order: int = 5
-    bandpass_low: float = 6.0   # Hz - below lowest SSVEP frequency
-    bandpass_high: float = 40.0  # Hz - above 2nd harmonic of 15 Hz
+    bandpass_low: float = 5.0   # Hz - Updated to 5 Hz for wider frequency range
+    bandpass_high: float = 50.0  # Hz - Updated to 50 Hz for wider frequency range
 
-    # Optional notch filter (set to None to disable)
-    notch_freq: float = None  # 60.0 for US, 50.0 for EU, None to disable
+    # Notch filter for powerline noise (60 Hz for US, 50 Hz for EU)
+    notch_freq: float = 60.0  # Enabled by default for US powerline noise
     notch_q: float = 30.0     # Quality factor for notch filter
+
+    # Smoothing filter (moving average)
+    smoothing_enabled: bool = True  # Enable smoothing by default
+    smoothing_window: int = 5  # Number of samples for moving average (5 @ 250Hz = 20ms)
 
     # ==========================================================================
     # Decision Thresholds

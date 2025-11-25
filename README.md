@@ -122,6 +122,89 @@ python run_bci_with_feedback.py --list-ports
 2. Connect LEDs as specified in Hardware Setup
 3. The Python script will automatically start/stop stimulation
 
+## Hardware Troubleshooting
+
+Run comprehensive hardware diagnostics to verify EEG and Arduino connections:
+
+```bash
+# Full hardware test (auto-detects ports)
+python troubleshoot_hardware.py
+
+# Specify ports manually
+python troubleshoot_hardware.py --cyton COM3 --arduino COM4
+
+# Adjust signal analysis duration
+python troubleshoot_hardware.py --cyton COM3 --duration 20
+```
+
+**What it checks:**
+- Arduino connection and LED control (white + red LEDs)
+- Cyton EEG acquisition and sampling rate
+- **Signal quality analysis** - detects common issues:
+  - Flat channels (broken/disconnected electrodes)
+  - DC offset (reference electrode issues)
+  - Excessive noise (poor contact, EMG, electrical interference)
+  - Saturation (amplifier clipping)
+
+**Common Issues:**
+
+| Symptom | Likely Cause | Solution |
+|---------|--------------|----------|
+| All channels bad/noisy | **Reference (SRB2) not connected** | Connect SRB2 to earlobe/mastoid |
+| One channel flat | Broken electrode or poor contact | Re-seat electrode, check wire |
+| High noise on all channels | Electrical interference | Move away from electronics, check grounding |
+| DC offset | Poor reference contact | Clean reference electrode, improve contact |
+
+## Real-time Monitoring & Optimization
+
+The real-time monitor provides comprehensive live monitoring of your BCI system for validation and optimization:
+
+```bash
+# With calibration templates (recommended)
+python run_realtime_monitor.py --subject YOUR_NAME --cyton COM3 --arduino COM4
+
+# Without calibration (standard CCA)
+python run_realtime_monitor.py --cyton COM3 --arduino COM4
+
+# Larger window for higher accuracy (500ms instead of 252ms)
+python run_realtime_monitor.py --subject YOUR_NAME --cyton COM3 --window-ms 500
+
+# Quick signal quality test only
+python run_realtime_monitor.py --cyton COM3 --test-only
+```
+
+**What it shows:**
+- **Signal quality:** Raw vs filtered data comparison
+- **Live correlations:** Real-time correlation scores for all 4 frequencies
+- **Classification results:** Which LED the system thinks you're looking at
+- **Performance metrics:** Accuracy, prediction distribution, average correlations
+- **Optimization recommendations:** Personalized suggestions to improve accuracy
+
+**Live Display Format:**
+```
+Time  │ Win#  │ 15.00Hz (Far ) │ 12.00Hz (Cent) │ 10.00Hz (Cent) │ 8.57Hz (Far ) │ Best   │ Margin │ Pred   │ Status
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  3.2s│   145 │  0.342         │  0.289         │  0.712         │  0.301         │  10.00 │  0.223 │  10.00 │ Center-Left
+```
+
+**Window Size Optimization:**
+- Default: 252ms (63 samples @ 250Hz) - Low latency
+- For >90% accuracy: Try 400-500ms windows (`--window-ms 500`)
+- Tradeoff: Larger windows = better frequency resolution but higher latency
+
+**Using Calibration Templates:**
+All BCI scripts now support `--subject` parameter to automatically load your calibration data:
+```bash
+# BCI with Arduino feedback + calibration
+python run_bci_with_feedback.py --subject YOUR_NAME --cyton COM3 --arduino COM4
+
+# Real-time monitor + calibration
+python run_realtime_monitor.py --subject YOUR_NAME --cyton COM3
+
+# Standard calibrated BCI
+python run_bci_calibrated.py --subject YOUR_NAME --cyton COM3
+```
+
 ## Calibration (Personalized Templates)
 
 Run calibration to create personalized templates for improved accuracy:
@@ -155,10 +238,12 @@ python run_bci_calibrated.py --list-calibrations
 ```
 ssvep-device-control/
 ├── run_cli.py               # CLI classifier (no Arduino)
-├── run_bci_with_feedback.py # BCI with Arduino feedback
+├── run_bci_with_feedback.py # BCI with Arduino feedback (supports --subject)
 ├── run_bci_calibrated.py    # BCI with personalized templates
 ├── run_calibration.py       # Calibration data collection
+├── run_realtime_monitor.py  # Real-time monitoring & optimization
 ├── run_gui.py               # PyQt6 GUI
+├── troubleshoot_hardware.py # Hardware diagnostics
 ├── requirements.txt
 │
 ├── calibration/             # Calibration data (per subject)
@@ -178,7 +263,7 @@ ssvep-device-control/
     │
     ├── models/
     │   ├── eeg_buffer.py    # Ring buffer
-    │   ├── preprocessor.py  # CAR + bandpass
+    │   ├── preprocessor.py  # CAR + bandpass + notch + smoothing
     │   ├── cca_decoder.py   # Standard CCA
     │   ├── calibration.py   # Calibration data collection
     │   └── template_cca.py  # Template-based CCA
@@ -201,12 +286,15 @@ ssvep-device-control/
 ### Signal Processing Pipeline
 1. **Acquisition**: 250 Hz streaming from Cyton via BrainFlow
 2. **Buffering**: 63-sample windows (252 ms) with 12-sample steps (48 ms, ~80% overlap)
-3. **Preprocessing** (optional):
+3. **Preprocessing** (enabled by default):
    - Common Average Reference (CAR)
-   - 5th-order Butterworth bandpass (6-40 Hz)
-4. **Classification**: CCA with synthetic reference signals
+   - 5th-order Butterworth bandpass (5-50 Hz)
+   - Notch filter (60 Hz for US powerline noise)
+   - Moving average smoothing (5 samples = 20ms)
+4. **Classification**: CCA with synthetic reference signals (or template-based if calibrated)
    - Fundamental + 1st harmonic for each target frequency
    - Correlation computed for all 4 frequencies per window
+   - Template-based CCA: 70% template matching + 30% standard CCA (when using `--subject`)
 5. **Decision Logic**:
    - Confidence threshold: ρ_max ≥ 0.55
    - Margin threshold: (ρ_max - ρ_second) ≥ 0.15
@@ -258,11 +346,22 @@ class SSVEPConfig:
     margin_threshold: float = 0.15
     agreement_window: int = 2        # Windows that must agree
 
-    bandpass_low: float = 6.0        # Hz
-    bandpass_high: float = 40.0      # Hz
+    # Default filters (applied to ALL BCI modes)
+    bandpass_low: float = 5.0        # Hz
+    bandpass_high: float = 50.0      # Hz
+    notch_freq: float = 60.0         # Hz (US powerline noise)
+    smoothing_enabled: bool = True   # Moving average smoothing
+    smoothing_window: int = 5        # 5 samples = 20ms
 ```
 
 ## Troubleshooting
+
+### Hardware Issues
+For hardware diagnostics (EEG signal quality, electrode contact, etc.), use:
+```bash
+python troubleshoot_hardware.py --cyton COM3 --arduino COM4
+```
+See [Hardware Troubleshooting](#hardware-troubleshooting) section for details.
 
 ### Cyton Connection Issues
 ```bash
@@ -274,14 +373,17 @@ python run_cli.py --list-ports
 ```
 
 ### Low Classification Accuracy
-1. Check electrode impedance (<10 kΩ recommended)
-2. Ensure user is fixating on one LED
-3. Try lowering margin threshold: `--margin 0.10`
-4. Increase window size in config for better frequency resolution
+1. Run hardware troubleshooter to verify signal quality
+2. Check electrode impedance (<10 kΩ recommended)
+3. Ensure user is fixating on one LED (avoid eye movements)
+4. Try lowering margin threshold: `--margin 0.10`
+5. Run calibration to create personalized templates
+6. Increase window size in config for better frequency resolution
 
 ### High Latency
 - Close other CPU-intensive applications
 - Check USB connection (use USB 3.0 if available)
+- Reduce GUI update rate if using PyQt interface
 
 ## Development Roadmap
 

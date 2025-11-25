@@ -27,6 +27,8 @@ sys.path.insert(0, str(Path(__file__).parent / "ssvep_bci"))
 from utils.config import SSVEPConfig, create_config
 from models.eeg_buffer import EEGBuffer
 from models.cca_decoder import SSVEPDecoder
+from models.template_cca import TemplateCCADecoder, TemplateCCAConfig
+from models.calibration import CalibrationCollector
 from drivers.brainflow_driver import BrainFlowDriver, SyntheticSSVEPDriver
 from drivers.arduino_controller import ArduinoController, BCIFeedbackController
 
@@ -38,6 +40,7 @@ class BCIWithFeedback:
         self,
         arduino_port: str = None,
         cyton_port: str = None,
+        subject: str = None,
         use_synthetic: bool = False,
         synthetic_target: float = 10.0,
         margin_threshold: float = 0.10,
@@ -48,6 +51,7 @@ class BCIWithFeedback:
         Args:
             arduino_port: Serial port for Arduino (auto-detect if None)
             cyton_port: Serial port for Cyton (auto-detect if None)
+            subject: Subject ID for loading calibration templates (optional)
             use_synthetic: Use synthetic EEG for testing (no Cyton needed)
             synthetic_target: Target frequency for synthetic mode
             margin_threshold: Classification margin threshold
@@ -55,6 +59,7 @@ class BCIWithFeedback:
         """
         self.use_synthetic = use_synthetic
         self.synthetic_target = synthetic_target
+        self.subject = subject
 
         # Config with adjusted threshold
         self.config = create_config(margin_threshold=margin_threshold)
@@ -64,7 +69,18 @@ class BCIWithFeedback:
 
         # EEG components
         self.buffer = EEGBuffer(self.config)
-        self.decoder = SSVEPDecoder(self.config)
+
+        # Decoder - try to load templates if subject provided
+        self.decoder = None
+        self.using_templates = False
+
+        if subject:
+            self._load_calibration()
+
+        # Create standard decoder if no templates loaded
+        if self.decoder is None:
+            print("Using standard CCA (no calibration templates)")
+            self.decoder = SSVEPDecoder(self.config)
 
         if use_synthetic:
             self.eeg_driver = SyntheticSSVEPDriver(
@@ -82,6 +98,37 @@ class BCIWithFeedback:
         self.is_running = False
         self._n_windows = 0
         self._correct_predictions = 0
+
+    def _load_calibration(self):
+        """Load calibration templates for subject."""
+        sessions = CalibrationCollector.get_subject_sessions(self.subject)
+        if not sessions:
+            print(f"No calibration found for subject '{self.subject}'")
+            return
+
+        try:
+            # Combine all sessions
+            cal_data = CalibrationCollector.get_combined_calibration(self.subject)
+            if cal_data is None:
+                return
+
+            # Create template decoder
+            template_config = TemplateCCAConfig(
+                standard_weight=0.3,
+                template_weight=0.7
+            )
+
+            self.decoder = TemplateCCADecoder(
+                self.config,
+                template_config,
+                cal_data
+            )
+
+            self.using_templates = True
+            print(f"✓ Loaded calibration for {self.subject} ({len(sessions)} sessions)")
+
+        except Exception as e:
+            print(f"Error loading calibration: {e}")
 
     def connect(self) -> bool:
         """Connect to all hardware.
@@ -261,6 +308,12 @@ Examples:
     )
 
     parser.add_argument(
+        '--subject',
+        type=str,
+        help='Subject ID for loading calibration templates (optional)'
+    )
+
+    parser.add_argument(
         '--arduino', '-a',
         type=str,
         default=None,
@@ -321,6 +374,7 @@ Examples:
     bci = BCIWithFeedback(
         arduino_port=args.arduino,
         cyton_port=args.cyton,
+        subject=args.subject,
         use_synthetic=args.synthetic,
         synthetic_target=args.target,
         margin_threshold=args.margin

@@ -16,7 +16,7 @@ Usage:
 import sys
 import time
 import argparse
-import winsound  # Windows only - for audio cues
+import threading
 from pathlib import Path
 
 # Add ssvep_bci to path
@@ -28,31 +28,74 @@ from models.calibration import CalibrationCollector, FREQ_TO_EVENT_ID
 from drivers.brainflow_driver import BrainFlowDriver, SyntheticSSVEPDriver
 from drivers.arduino_controller import ArduinoController
 
+# Global flag to prevent beep buffering during trials
+_beep_lock = threading.Lock()
+_suppress_beeps = False
+
 
 def beep_start():
-    """Play start beep (high pitch)."""
-    try:
-        winsound.Beep(1000, 200)  # 1000 Hz for 200ms
-    except:
-        print("\a", end="", flush=True)  # Fallback beep
+    """Play start beep (high pitch) in non-blocking way."""
+    global _suppress_beeps
+    if _suppress_beeps:
+        return
+
+    def _beep():
+        if _beep_lock.acquire(blocking=False):
+            try:
+                import winsound
+                winsound.Beep(1000, 200)  # 1000 Hz for 200ms
+            except:
+                print("\a", end="", flush=True)  # Fallback beep
+            finally:
+                _beep_lock.release()
+
+    threading.Thread(target=_beep, daemon=True).start()
 
 
 def beep_end():
-    """Play end beep (low pitch)."""
-    try:
-        winsound.Beep(500, 200)  # 500 Hz for 200ms
-    except:
-        print("\a", end="", flush=True)
+    """Play end beep (low pitch) in non-blocking way."""
+    global _suppress_beeps
+    if _suppress_beeps:
+        return
+
+    def _beep():
+        if _beep_lock.acquire(blocking=False):
+            try:
+                import winsound
+                winsound.Beep(500, 200)  # 500 Hz for 200ms
+            except:
+                print("\a", end="", flush=True)
+            finally:
+                _beep_lock.release()
+
+    threading.Thread(target=_beep, daemon=True).start()
 
 
 def beep_rest():
-    """Play rest beep (two short beeps)."""
-    try:
-        winsound.Beep(800, 100)
-        time.sleep(0.05)
-        winsound.Beep(800, 100)
-    except:
-        print("\a", end="", flush=True)
+    """Play rest beep (two short beeps) in non-blocking way."""
+    global _suppress_beeps
+    if _suppress_beeps:
+        return
+
+    def _beep():
+        if _beep_lock.acquire(blocking=False):
+            try:
+                import winsound
+                winsound.Beep(800, 100)
+                time.sleep(0.05)
+                winsound.Beep(800, 100)
+            except:
+                print("\a", end="", flush=True)
+            finally:
+                _beep_lock.release()
+
+    threading.Thread(target=_beep, daemon=True).start()
+
+
+def suppress_beeps(suppress: bool):
+    """Enable/disable beep suppression during critical periods."""
+    global _suppress_beeps
+    _suppress_beeps = suppress
 
 
 class CalibrationRunner:
@@ -192,6 +235,10 @@ class CalibrationRunner:
 
                 # Start audio cue
                 beep_start()
+                time.sleep(0.3)  # Wait for beep to complete
+
+                # Suppress all beeps during trial
+                suppress_beeps(True)
 
                 # Light up the RED LED under the target as a visual cue
                 if self.arduino.is_connected:
@@ -213,8 +260,12 @@ class CalibrationRunner:
                     time.sleep(0.01)
 
                 # End trial
-                beep_end()
                 self.collector.end_trial()
+
+                # Re-enable beeps and play end beep
+                suppress_beeps(False)
+                beep_end()
+                time.sleep(0.3)  # Wait for beep to complete
 
                 if self.arduino.is_connected:
                     self.arduino.stop_stimulation()
