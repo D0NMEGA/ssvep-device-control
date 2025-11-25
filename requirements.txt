@@ -10,6 +10,10 @@ scikit-learn>=1.0.0
 # EEG acquisition
 brainflow>=5.0.0
 
+# LSL and XDF for calibration data streaming and storage
+pylsl>=1.16.0
+pyxdf>=1.16.0
+
 # Optional: Serial port detection for Cyton
 pyserial>=3.5
 
