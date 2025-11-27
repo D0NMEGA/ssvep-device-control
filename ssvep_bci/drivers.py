@@ -142,7 +142,8 @@ class SyntheticSSVEPDriver(BrainFlowDriver):
 
         # Generate ~10 samples
         n_samples = 10
-        n_channels = len(self.eeg_channels)
+        # Use config's channel count (8 for Cyton) instead of all BrainFlow channels (16)
+        n_channels = len(self.config.electrode_names)
 
         t = (self.sample_count + np.arange(n_samples)) / self.sampling_rate
         self.sample_count += n_samples
@@ -226,8 +227,8 @@ class ArduinoController:
                     response = self.serial.readline().decode('utf-8').strip()
                     if response:
                         self._handle_response(response)
-            except:
-                pass
+            except Exception as e:
+                logger.error(f"Error reading Arduino response: {e}")
             time.sleep(0.01)
 
     def _handle_response(self, response: str):
@@ -240,9 +241,15 @@ class ArduinoController:
             # Check if unexpected (button press)
             if not self._expected_stop and self.is_running:
                 logger.warning("Button pressed - emergency stop!")
+                print("\n[ARDUINO] Emergency stop button detected!")
                 self.button_pressed = True
             self.is_running = False
             self._expected_stop = False
+        elif response == "BUTTON" or response == "BUTTON_PRESSED":
+            # Direct button press message from Arduino
+            logger.warning("Emergency stop button pressed!")
+            print("\n[ARDUINO] Emergency stop button pressed!")
+            self.button_pressed = True
 
     def send_command(self, command: str) -> bool:
         """Send command to Arduino."""
@@ -270,7 +277,9 @@ class ArduinoController:
         Args:
             frequency: 8.57, 10.0, 12.0, or 15.0 Hz
         """
-        freq_map = {8.57: 0, 10.0: 1, 12.0: 2, 15.0: 3}
+        # Match Arduino's physical layout (left to right): 8.57, 10, 12, 15
+        # Arduino pins: redPins[3]=leftmost(8.57), redPins[2], redPins[1], redPins[0]=rightmost(15)
+        freq_map = {15.0: 0, 12.0: 1, 10.0: 2, 8.57: 3}
         for f, idx in freq_map.items():
             if abs(frequency - f) < 0.01:
                 return self.send_command(f"FEEDBACK:{idx}")

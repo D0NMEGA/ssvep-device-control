@@ -4,7 +4,14 @@
       "Bash(python:*)",
       "Bash(pip install:*)",
       "Bash(copy:*)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(findstr:*)",
+      "Bash(dir:*)",
+      "Bash(timeout 15 python:*)",
+      "Bash(timeout 10 python:*)",
+      "Bash(move calibration.py offline_training.py)",
+      "Bash(git mv:*)",
+      "Bash(git grep:*)"
     ],
     "deny": [],
     "ask": []

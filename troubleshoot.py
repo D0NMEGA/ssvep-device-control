@@ -6,8 +6,8 @@ Tests EEG and Arduino connections, displays signal quality,
 and helps identify hardware issues.
 
 Usage:
-    python troubleshoot_hardware.py --cyton COM3 --arduino COM4
-    python troubleshoot_hardware.py  # Auto-detect ports
+    python troubleshoot.py --cyton COM3 --arduino COM4
+    python troubleshoot.py  # Auto-detect ports
 """
 
 import sys
@@ -303,9 +303,16 @@ class HardwareTroubleshooter:
             self.cleanup()
 
     def cleanup(self):
-        """Disconnect all hardware."""
+        """Disconnect all hardware and close any LSL streams."""
         print("\n" + "="*60)
         print("Cleaning up...")
+
+        # Defensive: Close any LSL streams if they exist
+        # (troubleshoot.py doesn't currently create streams, but this is future-proof)
+        if hasattr(self, 'lsl_outlet'):
+            del self.lsl_outlet
+            print("✓ Closed LSL stream")
+
         if self.eeg_driver:
             self.eeg_driver.stop_stream()
             self.eeg_driver.disconnect()

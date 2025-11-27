@@ -8,7 +8,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from ssvep_bci.drivers.arduino_controller import ArduinoController
+from ssvep_bci.drivers import ArduinoController
 import time
 
 arduino = ArduinoController('COM4')

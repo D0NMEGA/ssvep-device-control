@@ -18,9 +18,10 @@
  *     "CLEAR"      - Turn off all red LEDs
  *
  *   Responses (send):
- *     "OK"         - Command acknowledged
- *     "RUNNING"    - LEDs started
- *     "STOPPED"    - LEDs stopped
+ *     "OK"             - Command acknowledged
+ *     "RUNNING"        - LEDs started
+ *     "STOPPED"        - LEDs stopped
+ *     "BUTTON_PRESSED" - Emergency stop button pressed (D10)
  */
 
 // Pin definitions
@@ -147,14 +148,21 @@ void handleButton() {
   }
 
   if ((millis() - lastDebounceTime) > DEBOUNCE_DELAY) {
-    if (reading == LOW && lastButtonState == HIGH) {
-      // Button pressed - toggle stimulation
-      if (isRunning) {
-        stopStimulation();
-        Serial.println("STOPPED");
-      } else {
-        startStimulation();
-        Serial.println("RUNNING");
+    static int stableState = HIGH;
+
+    if (reading != stableState) {
+      stableState = reading;
+
+      if (stableState == LOW) {
+        Serial.println("BUTTON_PRESSED");
+
+        if (isRunning) {
+          stopStimulation();
+          Serial.println("STOPPED");
+        } else {
+          startStimulation();
+          Serial.println("RUNNING");
+        }
       }
     }
   }

@@ -24,9 +24,9 @@ class SSVEPConfig:
     fs: int = 250  # Sampling frequency (Hz) - OpenBCI Cyton
 
     # Window parameters
-    # 250 ms window at 250 Hz = 62.5 samples, use 63 for integer
-    window_samples: int = 63  # ~252 ms window
-    step_samples: int = 12    # ~48 ms step (~80% overlap)
+    # Reference uses 500 ms window: 500ms * 250Hz = 125 samples
+    window_samples: int = 125  # 500 ms window (reference default)
+    step_samples: int = 25    # ~100 ms step (~80% overlap)
 
     # ==========================================================================
     # SSVEP Target Frequencies (Hz) - Must match Arduino LED flicker rates
@@ -38,7 +38,23 @@ class SSVEPConfig:
     n_harmonics: int = 2  # fundamental + 1st harmonic
 
     # ==========================================================================
-    # Filter Parameters
+    # Filter Bank Analysis (Nakanishi et al. 2018)
+    # ==========================================================================
+    # Number of filter banks (1-10)
+    # Reference uses 2 (conservative, better for noisy signals)
+    num_fbs: int = 2  # Changed from 5 to match reference (TEST 2)
+
+    # Use ensemble TRCA (all class weights) vs class-specific weights
+    is_ensemble: bool = False
+
+    # Visual processing delay before SSVEP response appears
+    len_delay_s: float = 0.13  # 130 ms delay
+
+    # Analysis window duration for classification
+    len_gaze_s: float = 0.5    # 500 ms window (faster ITR than 250ms)
+
+    # ==========================================================================
+    # Filter Parameters (LEGACY - filter bank replaces these)
     # ==========================================================================
     # Butterworth bandpass filter
     filter_order: int = 5

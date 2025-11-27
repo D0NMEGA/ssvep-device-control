@@ -38,27 +38,41 @@ class TRCA:
 
         Args:
             config: SSVEPConfig instance
-            n_components: Number of TRCA components to retain (default: 1)
+            n_components: Number of TRCA components to retain (default: 1 = 2nd eigenvector only)
         """
         self.config = config or SSVEPConfig()
         self.n_components = n_components
 
         # Model parameters (filled during fit)
-        self.spatial_filters = []  # List of (n_channels, n_components) arrays
-        self.templates = []  # List of (n_channels, n_samples) arrays
+        self.spatial_filters = []  # List of (n_channels, n_components, n_filterbanks) arrays
+        self.templates = []  # List of (n_channels, n_samples, n_filterbanks) arrays
         self.is_fitted = False
 
+        # Filter bank coefficients (for weighted combination)
+        self.fb_coefs = None  # Will be set during fit
+
     def fit(self, X: np.ndarray, y: np.ndarray) -> 'TRCA':
-        """Train TRCA model on calibration data.
+        """Train TRCA model on calibration data with filter banks.
 
         Args:
-            X: Training data with shape (n_trials, n_channels, n_samples)
+            X: Training data with shape (n_trials, n_channels, n_samples, n_filterbanks)
             y: Labels with shape (n_trials,) containing class indices
 
         Returns:
             self (fitted model)
         """
-        n_trials, n_channels, n_samples = X.shape
+        if X.ndim == 4:
+            n_trials, n_channels, n_samples, n_filterbanks = X.shape
+        else:
+            # Backward compatibility: no filter banks
+            n_trials, n_channels, n_samples = X.shape
+            n_filterbanks = 1
+            X = X[..., np.newaxis]  # Add filterbank dimension
+
+        # Compute filter bank coefficients
+        from .filterbank import FilterBank
+        fb = FilterBank(fs=self.config.fs, num_bands=n_filterbanks)
+        self.fb_coefs = fb.get_coefficients()
 
         # Get unique classes
         classes = np.unique(y)
@@ -68,23 +82,38 @@ class TRCA:
         self.spatial_filters = []
         self.templates = []
 
-        # For each class, compute TRCA spatial filters and template
+        # For each class and filter bank, compute TRCA spatial filters and template
         for class_idx in classes:
             # Get trials for this class
             class_mask = (y == class_idx)
-            X_class = X[class_mask]  # Shape: (n_trials_class, n_channels, n_samples)
+            X_class = X[class_mask]  # Shape: (n_trials_class, n_channels, n_samples, n_filterbanks)
 
-            # Compute TRCA spatial filter
-            W = self._compute_trca_filter(X_class)
+            # Initialize storage for this class
+            W_all_fb = []
+            template_all_fb = []
 
-            # Keep only top n_components
-            W = W[:, :self.n_components]  # Shape: (n_channels, n_components)
+            # Process each filter bank independently
+            for fb_i in range(n_filterbanks):
+                X_fb = X_class[:, :, :, fb_i]  # Shape: (n_trials, n_channels, n_samples)
 
-            # Compute template by averaging trials
-            template = np.mean(X_class, axis=0)  # Shape: (n_channels, n_samples)
+                # Compute TRCA spatial filter
+                W = self._compute_trca_filter(X_fb)
 
-            self.spatial_filters.append(W)
-            self.templates.append(template)
+                # Use 2nd eigenvector (index 1) as per reference
+                W = W[:, 1:2]  # Shape: (n_channels, 1)
+
+                # Compute template by averaging trials
+                template = np.mean(X_fb, axis=0)  # Shape: (n_channels, n_samples)
+
+                W_all_fb.append(W)
+                template_all_fb.append(template)
+
+            # Stack across filter banks
+            W_class = np.stack(W_all_fb, axis=2)  # Shape: (n_channels, 1, n_filterbanks)
+            template_class = np.stack(template_all_fb, axis=2)  # Shape: (n_channels, n_samples, n_filterbanks)
+
+            self.spatial_filters.append(W_class)
+            self.templates.append(template_class)
 
         self.is_fitted = True
         return self
@@ -107,14 +136,19 @@ class TRCA:
         """
         n_trials, n_channels, n_samples = X.shape
 
+        # CRITICAL: Center each trial (remove mean) as per reference implementation
+        X_centered = np.zeros_like(X)
+        for trial_i in range(n_trials):
+            X_centered[trial_i] = X[trial_i] - X[trial_i].mean(axis=1, keepdims=True)
+
         # Compute S: inter-trial covariance matrix
         # S = sum over all pairs (i,j) of cov(X_i, X_j)
         S = np.zeros((n_channels, n_channels))
 
         for i in range(n_trials):
             for j in range(i+1, n_trials):
-                Xi = X[i]  # Shape: (n_channels, n_samples)
-                Xj = X[j]  # Shape: (n_channels, n_samples)
+                Xi = X_centered[i]  # Shape: (n_channels, n_samples)
+                Xj = X_centered[j]  # Shape: (n_channels, n_samples)
 
                 # Cross-covariance: Xi @ Xj^T
                 S += Xi @ Xj.T + Xj @ Xi.T
@@ -129,7 +163,7 @@ class TRCA:
         Q = np.zeros((n_channels, n_channels))
 
         for i in range(n_trials):
-            Xi = X[i]  # Shape: (n_channels, n_samples)
+            Xi = X_centered[i]  # Shape: (n_channels, n_samples)
             Q += Xi @ Xi.T
 
         Q /= n_trials
@@ -168,8 +202,10 @@ class TRCA:
         """Predict class labels for test data.
 
         Args:
-            X: Test data with shape (n_trials, n_channels, n_samples)
-               or (n_channels, n_samples) for single trial
+            X: Test data with shape:
+               - (n_trials, n_channels, n_samples, n_filterbanks) for multiple trials
+               - (n_channels, n_samples, n_filterbanks) for single trial with filterbanks
+               - (n_channels, n_samples) for single trial without filterbanks (backward compat)
 
         Returns:
             Predicted class indices with shape (n_trials,) or scalar
@@ -177,17 +213,22 @@ class TRCA:
         if not self.is_fitted:
             raise ValueError("Model must be fitted before prediction")
 
-        # Handle single trial
+        # Handle single trial (2D or 3D with filterbanks)
         single_trial = False
         if X.ndim == 2:
-            X = X[np.newaxis, :, :]  # Add trial dimension
+            # (n_channels, n_samples) - backward compatibility
+            X = X[np.newaxis, :, :]
+            single_trial = True
+        elif X.ndim == 3:
+            # (n_channels, n_samples, n_filterbanks) - single trial with filterbanks
+            X = X[np.newaxis, :, :, :]
             single_trial = True
 
         n_trials = X.shape[0]
         predictions = np.zeros(n_trials, dtype=int)
 
         for trial_idx in range(n_trials):
-            trial = X[trial_idx]  # Shape: (n_channels, n_samples)
+            trial = X[trial_idx]
 
             # Compute correlation with each template
             correlations = self._compute_correlations(trial)
@@ -204,8 +245,10 @@ class TRCA:
         """Predict class labels and return correlation values.
 
         Args:
-            X: Test data with shape (n_trials, n_channels, n_samples)
-               or (n_channels, n_samples) for single trial
+            X: Test data with shape:
+               - (n_trials, n_channels, n_samples, n_filterbanks) for multiple trials
+               - (n_channels, n_samples, n_filterbanks) for single trial with filterbanks
+               - (n_channels, n_samples) for single trial without filterbanks (backward compat)
 
         Returns:
             Tuple of (predictions, correlations)
@@ -215,10 +258,15 @@ class TRCA:
         if not self.is_fitted:
             raise ValueError("Model must be fitted before prediction")
 
-        # Handle single trial
+        # Handle single trial (2D or 3D with filterbanks)
         single_trial = False
         if X.ndim == 2:
+            # (n_channels, n_samples) - backward compatibility
             X = X[np.newaxis, :, :]
+            single_trial = True
+        elif X.ndim == 3:
+            # (n_channels, n_samples, n_filterbanks) - single trial with filterbanks
+            X = X[np.newaxis, :, :, :]
             single_trial = True
 
         n_trials = X.shape[0]
@@ -243,37 +291,52 @@ class TRCA:
         return predictions, all_correlations
 
     def _compute_correlations(self, trial: np.ndarray) -> np.ndarray:
-        """Compute TRCA correlation with all templates.
+        """Compute TRCA correlation with all templates using filter bank weighting.
 
-        For each template k:
-        r_k = corr(W_k^T @ X, W_k^T @ template_k)
+        For each template k and filter bank fb:
+        r_k,fb = corr(W_k,fb^T @ X_fb, W_k,fb^T @ template_k,fb)
 
-        where W_k is the TRCA spatial filter for class k.
+        Then combine across filter banks using weighted sum:
+        r_k = sum_fb (coef_fb * r_k,fb)
 
         Args:
-            trial: Single trial with shape (n_channels, n_samples)
+            trial: Single trial with shape (n_channels, n_samples, n_filterbanks)
+                   or (n_channels, n_samples) for backward compatibility
 
         Returns:
             Correlation values with shape (n_classes,)
         """
+        # Handle backward compatibility (no filter banks)
+        if trial.ndim == 2:
+            trial = trial[..., np.newaxis]
+
+        n_channels, n_samples, n_filterbanks = trial.shape
         n_classes = len(self.templates)
+
         correlations = np.zeros(n_classes)
 
         for class_idx in range(n_classes):
-            W = self.spatial_filters[class_idx]  # Shape: (n_channels, n_components)
-            template = self.templates[class_idx]  # Shape: (n_channels, n_samples)
+            W = self.spatial_filters[class_idx]  # Shape: (n_channels, 1, n_filterbanks)
+            template = self.templates[class_idx]  # Shape: (n_channels, n_samples, n_filterbanks)
 
-            # Project trial and template onto TRCA space
-            trial_proj = W.T @ trial  # Shape: (n_components, n_samples)
-            template_proj = W.T @ template  # Shape: (n_components, n_samples)
+            # Compute correlation for each filter bank
+            fb_correlations = np.zeros(n_filterbanks)
 
-            # Compute correlation for each component and average
-            corr_sum = 0.0
-            for comp in range(self.n_components):
-                corr = self._pearson_correlation(trial_proj[comp], template_proj[comp])
-                corr_sum += corr
+            for fb_i in range(n_filterbanks):
+                W_fb = W[:, :, fb_i]  # Shape: (n_channels, 1)
+                template_fb = template[:, :, fb_i]  # Shape: (n_channels, n_samples)
+                trial_fb = trial[:, :, fb_i]  # Shape: (n_channels, n_samples)
 
-            correlations[class_idx] = corr_sum / self.n_components
+                # Project trial and template onto TRCA space
+                trial_proj = W_fb.T @ trial_fb  # Shape: (1, n_samples)
+                template_proj = W_fb.T @ template_fb  # Shape: (1, n_samples)
+
+                # Compute Pearson correlation
+                corr = self._pearson_correlation(trial_proj[0], template_proj[0])
+                fb_correlations[fb_i] = corr
+
+            # Weighted combination across filter banks (key reference feature!)
+            correlations[class_idx] = np.dot(self.fb_coefs[:n_filterbanks], fb_correlations)
 
         return correlations
 

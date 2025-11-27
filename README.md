@@ -38,14 +38,22 @@ python troubleshoot.py --cyton COM3 --arduino COM4
 Records EEG data with LSL markers, trains TRCA model:
 
 ```bash
-python calibration.py --subject alice --trials 5 --baseline 30
+# First session (auto-detects as session 1)
+python offline_training.py --subject alice --trials 5 --baseline 30
+
+# Later sessions (auto-increments session number, batch learning)
+python offline_training.py --subject alice --trials 5 --baseline 30
 ```
 
 **Workflow:**
 1. Start LabRecorder to capture LSL streams
-2. Script records 30s baseline + 20 calibration trials
-3. Automatically trains TRCA model from XDF file
-4. Saves model to `models/alice_trca_TIMESTAMP.pkl`
+2. Script automatically detects next session number for subject
+3. Records 30s baseline + 20 calibration trials (5 per frequency)
+4. Combines with all previous sessions (batch learning)
+5. Trains TRCA model with LOOCV evaluation
+6. Saves model to `models/alice_trca_TIMESTAMP.pkl`
+
+**Note**: Session numbers auto-increment! No need to specify `--session 2`, `--session 3`, etc.
 
 ### 3. Real-Time Classification
 
@@ -65,7 +73,7 @@ python classify.py models/alice_trca_20250115_143022.pkl
 
 ```
 ssvep-device-control/
-├── calibration.py              # Offline: Data collection + TRCA training
+├── offline_training.py         # Offline: Data collection + TRCA training
 ├── classify.py                 # Online: Real-time classification
 ├── troubleshoot.py             # Hardware diagnostics
 ├── requirements.txt            # Python dependencies
@@ -149,8 +157,11 @@ python troubleshoot.py [--cyton PORT] [--arduino PORT]
 - Run `troubleshoot.py` to check signal quality in real-time
 
 **Low classification accuracy:**
-- Run 3-5 calibration sessions (incremental learning)
-- Increase baseline duration (30-60 seconds)
+- Run 3-5 calibration sessions (automatic batch learning):
+  ```bash
+  python offline_training.py --subject alice  # Session auto-increments each time
+  ```
+- Increase baseline duration (30-60 seconds): `--baseline 60`
 - Ensure proper fixation during calibration
 - Try longer analysis windows: `python classify.py model.pkl --window-ms 500`
 
@@ -160,7 +171,7 @@ python troubleshoot.py [--cyton PORT] [--arduino PORT]
 - Try manual port: `--arduino COM3`
 
 **LabRecorder not seeing streams:**
-- Ensure `calibration.py` is running before starting LabRecorder
+- Ensure `offline_training.py` is running before starting LabRecorder
 - Restart LabRecorder and click "Update"
 - Check firewall (LSL uses UDP multicast)
 

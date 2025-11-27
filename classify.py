@@ -6,9 +6,9 @@ Real-time classification using trained TRCA model.
 Applies causal preprocessing and provides Arduino feedback.
 
 Usage:
-    python run_realtime.py models/alice_trca_20250115_143022.pkl
-    python run_realtime.py models/model.pkl --arduino COM3 --cyton COM4
-    python run_realtime.py models/model.pkl --window-ms 500
+    python classify.py models/alice_trca_20250115_143022.pkl
+    python classify.py models/model.pkl --arduino COM3 --cyton COM4
+    python classify.py models/model.pkl --window-ms 500
 """
 
 import sys
@@ -29,7 +29,7 @@ class RealtimeBCI:
     """Real-time SSVEP BCI with TRCA classification."""
 
     def __init__(self, model_path: str, arduino_port=None, cyton_port=None,
-                 use_synthetic=False, window_ms=250):
+                 use_synthetic=False, window_ms=None, confidence_threshold=0.3):
         # Load TRCA model
         print(f"Loading model: {model_path}")
         with open(model_path, 'rb') as f:
@@ -41,9 +41,25 @@ class RealtimeBCI:
         print(f"  Subject: {model_data.get('subject', 'unknown')}")
         print(f"  Test accuracy: {model_data.get('test_accuracy', 0)*100:.1f}%")
 
-        # Update window size
+        # Confidence threshold for predictions
+        self.confidence_threshold = confidence_threshold
+        print(f"  Confidence threshold: {confidence_threshold:.2f}")
+
+        # Infer template window size from first template
+        template_samples = self.trca.templates[0].shape[1]
+        template_duration_ms = (template_samples / self.config.fs) * 1000
+
+        # Use template size if window_ms not specified
+        if window_ms is None:
+            window_ms = template_duration_ms
+            print(f"  Using template window size: {template_duration_ms:.0f} ms ({template_samples} samples)")
+        else:
+            print(f"  WARNING: Custom window size ({window_ms} ms) may not match template ({template_duration_ms:.0f} ms)")
+
+        # Update window size in config (so buffer uses correct size)
         self.window_samples = int(window_ms * self.config.fs / 1000)
-        print(f"  Analysis window: {window_ms} ms ({self.window_samples} samples)")
+        self.config.window_samples = self.window_samples
+        print(f"  Analysis window: {window_ms:.0f} ms ({self.window_samples} samples)")
 
         # Initialize components
         self.preprocessor = OnlinePreprocessor(self.config)
@@ -86,7 +102,13 @@ class RealtimeBCI:
         return True
 
     def disconnect(self):
-        """Disconnect hardware."""
+        """Disconnect hardware and close any LSL streams."""
+        # Defensive: Close any LSL streams if they exist
+        # (classify.py doesn't currently create output streams, but this is future-proof)
+        if hasattr(self, 'lsl_outlet'):
+            del self.lsl_outlet
+            print("✓ Closed LSL stream")
+
         if self.arduino.is_connected:
             self.arduino.stop_stimulation()
             self.arduino.clear_feedback()
@@ -133,49 +155,51 @@ class RealtimeBCI:
                 # Get new data
                 data = self.eeg.get_data()
                 if data is not None and data.shape[1] > 0:
-                    self.buffer.add_data(data)
+                    self.buffer.append(data)
+
 
                 # Process when ready
-                if self.buffer.get_num_samples() >= self.window_samples:
+                if self.buffer.ready():
                     window_count += 1
 
-                    # Get window
-                    window = self.buffer.get_window(self.window_samples)
+                    window = self.buffer.get_window()  # window_samples already handled inside buffer
 
-                    # Preprocess (causal, online)
+                    # Preprocess: returns (n_channels, n_samples, n_filterbanks)
                     window_preprocessed = self.preprocessor.process(window)
 
-                    # Classify with TRCA
+                    # Predict: TRCA now handles 3D input (channels, samples, filterbanks)
                     pred_idx, correlations = self.trca.predict_with_correlation(window_preprocessed)
 
-                    # Get top 2
+                    freq = self.config.target_frequencies[pred_idx]
+
+                    max_corr = correlations[pred_idx]
+
+                    # Get margin for confidence assessment
                     sorted_idx = np.argsort(correlations)[::-1]
-                    top1_idx = sorted_idx[0]
-                    top2_idx = sorted_idx[1]
+                    if len(sorted_idx) > 1:
+                        margin = correlations[sorted_idx[0]] - correlations[sorted_idx[1]]
+                    else:
+                        margin = max_corr
 
-                    top1_corr = correlations[top1_idx]
-                    top2_corr = correlations[top2_idx]
-                    margin = top1_corr - top2_corr
-
-                    # Thresholds (TRCA has lower correlations than CCA)
-                    conf_thresh = 0.03
-                    margin_thresh = 0.01
-
-                    if top1_corr >= conf_thresh and margin >= margin_thresh:
-                        freq = self.config.target_frequencies[top1_idx]
-
-                        if top1_idx != self.last_prediction:
+                    # Check if correlation exceeds confidence threshold
+                    if max_corr >= self.confidence_threshold:
+                        # High confidence - update feedback
+                        if pred_idx != self.last_prediction:
                             print(f"[{window_count:4d}] Prediction: {freq:.2f} Hz "
-                                  f"(corr={top1_corr:.3f}, margin={margin:.3f})")
+                                  f"(weighted_corr={max_corr:.4f}, margin={margin:.4f}) ✓")
 
                             if self.arduino.is_connected:
                                 self.arduino.show_feedback(freq)
 
-                            self.last_prediction = top1_idx
+                            self.last_prediction = pred_idx
                     else:
+                        # Low confidence - clear LEDs and report
                         if self.last_prediction is not None:
+                            print(f"[{window_count:4d}] Low confidence: {max_corr:.4f} < {self.confidence_threshold:.2f} - LEDs off")
+
                             if self.arduino.is_connected:
                                 self.arduino.clear_feedback()
+
                             self.last_prediction = None
 
                 time.sleep(0.01)
@@ -204,8 +228,10 @@ def main():
                        help="Cyton serial port (auto-detect if not specified)")
     parser.add_argument("--synthetic", action="store_true",
                        help="Use synthetic EEG for testing")
-    parser.add_argument("--window-ms", type=int, default=250,
-                       help="Analysis window duration in ms (default: 250)")
+    parser.add_argument("--window-ms", type=int, default=None,
+                       help="Analysis window duration in ms (default: auto-detect from model)")
+    parser.add_argument("--confidence", type=float, default=0.3,
+                       help="Minimum correlation for LED feedback (default: 0.3, range: 0.0-1.0)")
 
     args = parser.parse_args()
 
@@ -220,7 +246,8 @@ def main():
         arduino_port=args.arduino,
         cyton_port=args.cyton,
         use_synthetic=args.synthetic,
-        window_ms=args.window_ms
+        window_ms=args.window_ms,
+        confidence_threshold=args.confidence
     )
 
     # Connect
