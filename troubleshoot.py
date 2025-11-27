@@ -201,23 +201,24 @@ class HardwareTroubleshooter:
                         # Flags (check raw data for issues)
                         flags = []
 
-                        # Check for flat line (dead channel)
-                        if raw_std < 1.0 or raw_ptp < 5.0:
+                        # Check for flat line (dead channel) - very strict, must be truly flat
+                        if raw_std < 0.5 or raw_ptp < 2.0:
                             flags.append("FLAT")
                             metrics['flat_channels'].add(ch)
 
-                        # Check for excessive noise
-                        if raw_std > 100.0:
+                        # Check for excessive noise - use filtered data for better assessment
+                        if filt_std > 50.0:
                             flags.append("NOISY")
                             metrics['noisy_channels'].add(ch)
 
-                        # Check for DC offset
-                        if abs(raw_mean) > 200.0:
-                            flags.append("DC OFFSET")
+                        # Check for extreme DC offset (raw EEG normally has DC offset, so be lenient)
+                        # OpenBCI Cyton outputs around 2.23V / 2 = ~1115 µV DC offset normally
+                        if abs(raw_mean) > 2000.0:
+                            flags.append("EXTREME DC")
                             metrics['bad_channels'].add(ch)
 
-                        # Check for saturation
-                        if raw_ptp > 500.0:
+                        # Check for saturation (much higher threshold for raw data)
+                        if raw_ptp > 1500.0:
                             flags.append("SATURATED")
                             metrics['bad_channels'].add(ch)
 
@@ -262,12 +263,15 @@ class HardwareTroubleshooter:
             print("  - Bias/ground electrode issues")
             print("  - Amplifier saturation")
 
-        # Check for missing reference
+        # Check for missing reference (only if most channels are truly bad)
         all_bad = metrics['flat_channels'].union(metrics['bad_channels'])
-        if len(all_bad) >= 6:
+        if len(all_bad) >= 7:  # 7 out of 8 channels bad
             print("\n[CRITICAL] Most channels are bad!")
             print("  Likely cause: Reference electrode (SRB2) is not connected!")
             print("  Solution: Connect SRB2 to earlobe or mastoid")
+        elif len(all_bad) >= 4:  # 4-6 channels bad
+            print("\n[WARNING] Multiple channels have issues")
+            print("  Check electrode contacts and reference connection")
 
         if len(all_bad) == 0 and len(metrics['noisy_channels']) == 0:
             print("\n[OK] All channels look good!")

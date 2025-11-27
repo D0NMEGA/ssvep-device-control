@@ -523,7 +523,24 @@ class OnlineTrainingBCI:
                 print("\n" + "-" * 60)
                 if self.max_trials is None or self.trial_count < self.max_trials:
                     print("Rest period: 2 seconds...")
-                    time.sleep(2)
+
+                    # Turn off LEDs during rest
+                    if self.arduino.is_connected:
+                        self.arduino.stop_stimulation()
+
+                    # Rest with emergency stop checking
+                    rest_start = time.time()
+                    while time.time() - rest_start < 2.0:
+                        # Check emergency stop during rest
+                        if self.arduino.is_connected and self.arduino.check_button_pressed():
+                            print("\n[EMERGENCY STOP] Button pressed during rest!")
+                            self.is_running = False
+                            break
+                        time.sleep(0.1)
+
+                    # Restart LEDs after rest (if not stopped)
+                    if self.is_running and self.arduino.is_connected:
+                        self.arduino.start_stimulation()
 
         except KeyboardInterrupt:
             print("\n\nStopped by user (Ctrl+C)")
